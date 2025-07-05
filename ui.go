@@ -79,14 +79,15 @@ func (ui *UI) DrawScreen(paneBuffers map[int]*PaneBuffer, activePaneID int, stat
 
 		// Draw active pane content below status bar
 		if pb, ok := paneBuffers[activePaneID]; ok {
-			for y, line := range pb.content {
+			content := pb.GetContent()
+			for y, line := range content {
 				for x, r := range line {
 					ui.screen.SetContent(x, y+1, r, nil, ui.defStyle) // +1 for status line
 				}
 			}
 			// Ensure cursor position is within bounds
-			cursorX := pb.cursorX
-			cursorY := pb.cursorY + 1 // +1 for status line
+			cursorX, cursorY := pb.GetCursor()
+			cursorY += 1 // +1 for status line
 			if cursorX >= 0 && cursorX < width && cursorY >= 1 && cursorY < height {
 				ui.screen.ShowCursor(cursorX, cursorY)
 			}

@@ -109,17 +109,8 @@ func (cs *ClientState) UpdatePaneBufferSizes() {
 	for _, pb := range cs.paneBuffers {
 		pb.width = width
 		pb.height = height - 1 // -1 for status line
-		// Re-initialize content with new dimensions, losing old content for simplicity
-		newContent := make([][]rune, pb.height)
-		for i := range newContent {
-			newContent[i] = make([]rune, pb.width)
-			for j := range newContent[i] {
-				newContent[i][j] = ' '
-			}
-		}
-		pb.content = newContent
-		pb.cursorX = 0
-		pb.cursorY = 0
+		// Resize the vt10x terminal
+		pb.terminal.Resize(width, height-1)
 	}
 }
 

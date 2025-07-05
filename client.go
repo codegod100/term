@@ -14,136 +14,54 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gdamore/tcell/v2"
+	"github.com/hinshun/vt10x"
 )
 
-// PaneBuffer holds the content for a single pane
+// PaneBuffer holds the content for a single pane using vt10x terminal emulator
 type PaneBuffer struct {
-	content [][]rune
-	cursorX int
-	cursorY int
-	width   int
-	height  int
-	// ANSI parsing state
-	inEscape bool
-	escapeBuf []byte
-	// For debugging ANSI parsing
-	debugANSI bool
+	terminal vt10x.Terminal
+	width    int
+	height   int
 }
 
 func NewPaneBuffer(width, height int) *PaneBuffer {
-	content := make([][]rune, height)
-	for i := range content {
-		content[i] = make([]rune, width)
-		for j := range content[i] {
-			content[i][j] = ' '
-		}
-	}
+	term := vt10x.New(vt10x.WithSize(width, height))
+	
 	return &PaneBuffer{
-		content: content,
-		width:   width,
-		height:  height,
-		inEscape: false,
-		escapeBuf: make([]byte, 0, 32),
-		debugANSI: false, // Set to true for debugging ANSI parsing
+		terminal: term,
+		width:    width,
+		height:   height,
 	}
 }
 
 func (pb *PaneBuffer) Write(p []byte) (n int, err error) {
-	for _, b := range p {
-		if pb.debugANSI {
-			// fmt.Printf("DEBUG_WRITE: Char: %q (0x%x), inEscape: %t, escapeBuf: %q\n", b, b, pb.inEscape, pb.escapeBuf)
-		}
+	// Let vt10x handle all the ANSI parsing
+	return pb.terminal.Write(p)
+}
 
-		if pb.inEscape {
-			pb.escapeBuf = append(pb.escapeBuf, b)
-
-			// Handle single-character escape sequences
-			if len(pb.escapeBuf) == 2 && pb.escapeBuf[0] == 0x1B {
-				switch b {
-				case '=', '>', '<', 'D', 'E', 'H', 'M', 'Z', '7', '8', 'c':
-					// Single character escape sequences - consume them
-					pb.inEscape = false
-					pb.escapeBuf = pb.escapeBuf[:0]
-					continue
-				}
-			}
-
-			// Check for CSI sequence terminator (0x40-0x7E)
-			if len(pb.escapeBuf) > 1 && b >= 0x40 && b <= 0x7E {
-				seq := string(pb.escapeBuf)
-				// Process CSI sequence (e.g., cursor movement, clear screen)
-				if len(seq) > 2 && seq[1] == '[' {
-					switch seq[len(seq)-1] {
-					case 'H': // Cursor Position: ESC[<ROW>;<COL>H
-						// For simplicity, just move to 0,0 for now
-						pb.cursorX = 0
-						pb.cursorY = 0
-					case 'J': // Erase in Display: ESC[2J (clear screen)
-						for y := 0; y < pb.height; y++ {
-							for x := 0; x < pb.width; x++ {
-								pb.content[y][x] = ' '
-							}
-						}
-						pb.cursorX = 0
-						pb.cursorY = 0
-					case 'm': // SGR (Select Graphic Rendition) - color/style
-						// Consume all color codes, don't apply for now
-					case 'A', 'B', 'C', 'D': // Cursor movement
-						// Consume cursor movement commands
-					case 'K': // Erase in Line
-						// Consume line erase commands
-					case 'n', 'c': // Device status report, device attributes
-						// Consume status reports
-					default:
-						// Consume any other CSI sequences we don't handle
-					}
-				}
-				// Always consume the escape sequence regardless
-				pb.inEscape = false
-				pb.escapeBuf = pb.escapeBuf[:0]
-			} else if b == '\a' { // BEL character, often terminates OSC
-				pb.inEscape = false
-				pb.escapeBuf = pb.escapeBuf[:0]
-			} else if len(pb.escapeBuf) > 1 && pb.escapeBuf[0] == ']' && b == '\\' { // ST (String Terminator) for OSC
-				pb.inEscape = false
-				pb.escapeBuf = pb.escapeBuf[:0]
-			} else if len(pb.escapeBuf) > 32 { // Safety: if sequence gets too long, abandon it
-				pb.inEscape = false
-				pb.escapeBuf = pb.escapeBuf[:0]
-			}
-		} else if b == 0x1B { // ESC character
-			pb.inEscape = true
-			pb.escapeBuf = pb.escapeBuf[:0] // Clear buffer
-			pb.escapeBuf = append(pb.escapeBuf, b)
-		} else if b == '\n' {
-			pb.cursorY++
-			pb.cursorX = 0
-		} else if b == '\r' {
-			pb.cursorX = 0
-		} else if b == 0x08 { // Backspace
-			if pb.cursorX > 0 {
-				pb.cursorX--
-			}
-			pb.content[pb.cursorY][pb.cursorX] = ' ' // Clear character at cursor
-		} else {
-			if pb.cursorX >= pb.width {
-				pb.cursorX = 0
-				pb.cursorY++
-			}
-			if pb.cursorY >= pb.height {
-				// Simple scroll: shift all lines up, clear last line
-				copy(pb.content, pb.content[1:])
-				pb.content[pb.height-1] = make([]rune, pb.width)
-				for i := 0; i < pb.width; i++ {
-					pb.content[pb.height-1][i] = ' '
-				}
-				pb.cursorY = pb.height - 1
-			}
-			pb.content[pb.cursorY][pb.cursorX] = rune(b)
-			pb.cursorX++
+func (pb *PaneBuffer) GetContent() [][]rune {
+	// Get terminal content from vt10x
+	pb.terminal.Lock()
+	defer pb.terminal.Unlock()
+	
+	content := make([][]rune, pb.height)
+	
+	for y := 0; y < pb.height; y++ {
+		content[y] = make([]rune, pb.width)
+		for x := 0; x < pb.width; x++ {
+			cell := pb.terminal.Cell(x, y)
+			content[y][x] = cell.Char
 		}
 	}
-	return len(p), nil
+	return content
+}
+
+func (pb *PaneBuffer) GetCursor() (int, int) {
+	pb.terminal.Lock()
+	defer pb.terminal.Unlock()
+	
+	cursor := pb.terminal.Cursor()
+	return cursor.X, cursor.Y
 }
 
 func runClient() {
