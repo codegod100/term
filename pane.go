@@ -16,6 +16,8 @@ type Pane struct {
 
 func NewPane(id int) (*Pane, error) {
 	cmd := exec.Command("/bin/bash")
+	// Set environment to disable colored prompts
+	cmd.Env = append(os.Environ(), "TERM=dumb", "PS1=$ ")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("error starting pty: %w", err)
@@ -29,6 +31,9 @@ func NewPane(id int) (*Pane, error) {
 }
 
 func (p *Pane) Start() {
+	// Send clear screen command to the new shell
+	p.ptmx.Write([]byte("clear\n"))
+	
 	go func() {
 		buf := make([]byte, 4096)
 		for {

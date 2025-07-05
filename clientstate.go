@@ -34,14 +34,37 @@ func (cs *ClientState) HandleDataMessage(payload []byte) {
 	if len(payload) >= 4 {
 		paneID := int(binary.BigEndian.Uint32(payload[:4]))
 		data := payload[4:]
+		
+		// Debug: log data messages
+		if f, err := os.OpenFile("/tmp/term-client.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			f.WriteString(fmt.Sprintf("HandleDataMessage: paneID=%d, activePaneID=%d, bufferExists=%t, dataLen=%d\n", 
+				paneID, cs.activePaneID, cs.paneBuffers[paneID] != nil, len(data)))
+			f.Close()
+		}
+		
 		if pb, ok := cs.paneBuffers[paneID]; ok {
 			pb.Write(data)
 			// Only redraw if this is the active pane
 			if paneID == cs.activePaneID {
 				cs.Draw()
 			}
+		} else {
+			// Debug: log missing buffer
+			if f, err := os.OpenFile("/tmp/term-client.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+				f.WriteString(fmt.Sprintf("HandleDataMessage: No buffer found for pane %d, available buffers: %v\n", 
+					paneID, cs.getBufferKeys()))
+				f.Close()
+			}
 		}
 	}
+}
+
+func (cs *ClientState) getBufferKeys() []int {
+	keys := make([]int, 0, len(cs.paneBuffers))
+	for k := range cs.paneBuffers {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func (cs *ClientState) HandleRedrawMessage(payload []byte) {

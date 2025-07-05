@@ -57,12 +57,22 @@ func (pb *PaneBuffer) Write(p []byte) (n int, err error) {
 		if pb.inEscape {
 			pb.escapeBuf = append(pb.escapeBuf, b)
 
+			// Handle single-character escape sequences
+			if len(pb.escapeBuf) == 2 && pb.escapeBuf[0] == 0x1B {
+				switch b {
+				case '=', '>', '<', 'D', 'E', 'H', 'M', 'Z', '7', '8', 'c':
+					// Single character escape sequences - consume them
+					pb.inEscape = false
+					pb.escapeBuf = pb.escapeBuf[:0]
+					continue
+				}
+			}
+
 			// Check for CSI sequence terminator (0x40-0x7E)
-			if b >= 0x40 && b <= 0x7E {
+			if len(pb.escapeBuf) > 1 && b >= 0x40 && b <= 0x7E {
 				seq := string(pb.escapeBuf)
-				// fmt.Printf("DEBUG_ANSI: CSI Sequence: %q\n", seq)
 				// Process CSI sequence (e.g., cursor movement, clear screen)
-				if len(seq) > 1 && seq[0] == '[' {
+				if len(seq) > 2 && seq[1] == '[' {
 					switch seq[len(seq)-1] {
 					case 'H': // Cursor Position: ESC[<ROW>;<COL>H
 						// For simplicity, just move to 0,0 for now
@@ -77,22 +87,33 @@ func (pb *PaneBuffer) Write(p []byte) (n int, err error) {
 						pb.cursorX = 0
 						pb.cursorY = 0
 					case 'm': // SGR (Select Graphic Rendition) - color/style
-						// Consume, but don't apply style for now
+						// Consume all color codes, don't apply for now
+					case 'A', 'B', 'C', 'D': // Cursor movement
+						// Consume cursor movement commands
+					case 'K': // Erase in Line
+						// Consume line erase commands
+					case 'n', 'c': // Device status report, device attributes
+						// Consume status reports
+					default:
+						// Consume any other CSI sequences we don't handle
 					}
 				}
+				// Always consume the escape sequence regardless
 				pb.inEscape = false
 				pb.escapeBuf = pb.escapeBuf[:0]
 			} else if b == '\a' { // BEL character, often terminates OSC
-				// fmt.Printf("DEBUG_ANSI: OSC Sequence (terminated by BEL): %q\n", string(pb.escapeBuf))
 				pb.inEscape = false
 				pb.escapeBuf = pb.escapeBuf[:0]
 			} else if len(pb.escapeBuf) > 1 && pb.escapeBuf[0] == ']' && b == '\\' { // ST (String Terminator) for OSC
-				// fmt.Printf("DEBUG_ANSI: OSC Sequence (terminated by ST): %q\n", string(pb.escapeBuf))
+				pb.inEscape = false
+				pb.escapeBuf = pb.escapeBuf[:0]
+			} else if len(pb.escapeBuf) > 32 { // Safety: if sequence gets too long, abandon it
 				pb.inEscape = false
 				pb.escapeBuf = pb.escapeBuf[:0]
 			}
 		} else if b == 0x1B { // ESC character
 			pb.inEscape = true
+			pb.escapeBuf = pb.escapeBuf[:0] // Clear buffer
 			pb.escapeBuf = append(pb.escapeBuf, b)
 		} else if b == '\n' {
 			pb.cursorY++
